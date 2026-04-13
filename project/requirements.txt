@@ -1,0 +1,4 @@
+customtkinter>=5.2
+numpy>=1.24
+matplotlib>=3.7
+segyio>=1.9.12
