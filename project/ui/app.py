@@ -5,6 +5,7 @@ from __future__ import annotations
 import queue
 import locale
 import threading
+import os ///моя правка
 import gc
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -42,6 +43,7 @@ class App(ctk.CTk):
         self.title("Seismic Data Suite")
         self.minsize(640, 480)
         self.configure(fg_color=C.WINDOW_BG)
+        self._undo_stack: list[dict[str, Any]] = [] ///моя правка
         self._apply_fullscreen_geometry()
 
         self.current_state: dict[str, str] = {
@@ -363,6 +365,8 @@ class App(ctk.CTk):
 
         self.bind_all("<Control-o>", lambda e: self._shortcut_open_file())
         self.bind_all("<Control-O>", lambda e: self._shortcut_open_file())
+        self.bind_all("<Control-z>", self._undo) /// мои правки
+        self.bind_all("<Control-Z>", self._undo) /// мои правки
 
     def _shortcut_open_file(self, event=None) -> Optional[str]:
         if self.current_state["tab"] != "Файл":
@@ -432,6 +436,7 @@ class App(ctk.CTk):
             )
             btn.pack(side="left", padx=4, pady=10)
 
+        add_tool("🗑️", "Очистить\nданные", self.clear_all_data)
         add_tool("⚙️", "Настройки", lambda: None)
         add_tool("⏳", "Фильтр", lambda: None)
         add_tool("📈", "Амплитуда", lambda: None)
@@ -596,6 +601,7 @@ class App(ctk.CTk):
     def _on_ribbon_method_checkbox(self, mid: str) -> None:
         if self._suspend_checkbox_cmd:
             return
+        self._save_undo_state() ///мои правки
         cb = self.analysis_method_checkboxes[mid]
         if cb.get():
             if mid not in self.analysis_pipeline:
@@ -782,6 +788,7 @@ class App(ctk.CTk):
         return C.ANALYSIS_LABELS.get(mid, mid)
 
     def toggle_analysis_method(self, mid: str) -> None:
+        self._save_undo_state() ///мои правки
         if mid in self.analysis_pipeline:
             self.analysis_pipeline.remove(mid)
         else:
@@ -1005,6 +1012,7 @@ class App(ctk.CTk):
         if moved:
             to = self._pipeline_row_index_at_y(event.y_root)
             if to is not None and to != idx0:
+                self._save_undo_state() ///мои правки
                 reorder_pipeline(self.analysis_pipeline, idx0, to)
                 self._refresh_analysis_ui()
             else:
@@ -1016,6 +1024,7 @@ class App(ctk.CTk):
                     self._pipeline_row_idle_style(hl)
         else:
             if 0 <= idx0 < len(self.analysis_pipeline):
+                self._save_undo_state() ///мои правки
                 self.analysis_pipeline.pop(idx0)
                 self._refresh_analysis_ui()
 
@@ -1851,7 +1860,50 @@ class App(ctk.CTk):
         self.update_idletasks()
         self.after(10, self._home_refresh_matplotlib_geometry)
         self.after(200, self._home_refresh_matplotlib_geometry)
+    def _save_undo_state(self) -> None:
+        """Сохраняем текущее состояние (файл + методы) в историю."""
+        state_snapshot = {
+            "pipeline": self.analysis_pipeline[:],
+            "file_path": self.current_file_path,
+        }
+        self._undo_stack.append(state_snapshot)
+        if len(self._undo_stack) > 30:
+            self._undo_stack.pop(0)
 
+    def _undo(self, event=None) -> None:
+        """Откат последнего изменения через Ctrl+Z."""
+        if not self._undo_stack:
+            self.status_hint_label.configure(text="История правок пуста")
+            return
+        
+        last_state = self._undo_stack.pop()
+        
+        # Восстанавливаем файл
+        self.current_file_path = last_state["file_path"]
+        if self.current_file_path:
+            name = os.path.basename(self.current_file_path)
+            self.file_status.configure(text=f"Восстановлен: {name}", text_color=C.STATUS_OK)
+        else:
+            self.file_status.configure(text="Файл не выбран", text_color="gray")
+            
+        # Восстанавливаем методы
+        self.analysis_pipeline = last_state["pipeline"]
+        self._refresh_analysis_ui()
+        self.status_hint_label.configure(text="Действие отменено (Ctrl+Z)")
+
+    def clear_all_data(self) -> None:
+        """Полная очистка сессии"""
+        if not self.current_file_path and not self.analysis_pipeline:
+            return
+
+        if messagebox.askyesno("Очистка", "Удалить выбранный файл и цепочку обработки?", parent=self):
+            self._save_undo_state() # Позволяет отменить даже очистку
+            self.current_file_path = None
+            self.file_status.configure(text="Файл не выбран", text_color="gray")
+            self.analysis_pipeline = []
+            self._refresh_analysis_ui()
+            for child in self.analysis_workspace_canvas.winfo_children():
+                child.destroy()
     def save_state(self, tab: str) -> None:
         """История ведётся только по смене вкладок; тема и масштаб не добавляют шаги назад."""
         if self.is_navigating:
